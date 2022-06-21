@@ -1,0 +1,7 @@
+logs/
+papers/
+weights/
+*.pyc
+*.pth
+networks/Segmenter/
+networks/XBoundFormer/
