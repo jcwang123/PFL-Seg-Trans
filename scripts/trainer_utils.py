@@ -20,6 +20,15 @@ def check_equal(net_clients):
             assert torch.sum(_tmp_param_data - params[name].data) == 0
 
 
+def freeze_params(net, keys):
+    params = dict(net.named_parameters())
+    for name, param in params.items():
+        if name in keys:
+            dict(net.named_parameters())[name].requires_grad = False
+        else:
+            dict(net.named_parameters())[name].requires_grad = True
+
+
 def update_global_model(net_clients, client_weight):
     print('Calculate the model avg----')
     params = dict(net_clients[0].named_parameters())

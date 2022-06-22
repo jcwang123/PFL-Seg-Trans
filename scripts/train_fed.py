@@ -8,7 +8,7 @@ import numpy as np
 import random
 from torch.utils.data import DataLoader
 
-from scripts.trainer_utils import set_global_grad, update_global_model, update_global_model_with_keys, check_equal
+from scripts.trainer_utils import set_global_grad, update_global_model, update_global_model_with_keys, check_equal, freeze_params
 from scripts.tester_utils import eval_container
 from utils.losses import dice_loss
 from config.base import get_args
@@ -59,26 +59,37 @@ def initial_trainer(args):
 
 def train_one_ep(args, dataloader_clients, net_clients, optimizer_clients,
                  epoch_num, writer):
-    for client_idx in range(args.client_num):
+    print = args.logger.info
+    local_update_clines = list(range(args.client_num))
+
+    for client_idx in local_update_clines:
         dataloader_current = dataloader_clients[client_idx]
         net_current = net_clients[client_idx]
         net_current.train()
         optimizer_current = optimizer_clients[client_idx]
 
         for i_batch, sampled_batch in enumerate(dataloader_current):
-            # obtain training data
+            #------------------  obtain training data ------------------ #
             volume_batch, label_batch = sampled_batch['image'].cuda(
             ), sampled_batch['label'].cuda()
 
-            # obtain updated parameter at inner loop
-            outputs = net_current(volume_batch)
+            #------------------  obtain updated parameter at inner loop ------------------ #
+            if args.fl == 'fedrep':
+                if i_batch <= 10:
+                    freeze_params(net_current, keys=args.body_keys)
+                else:
+                    freeze_params(net_current, keys=args.head_keys)
+            elif args.fl == 'fedbabu':
+                freeze_params(net_current, keys=args.head_keys)
 
+            outputs = net_current(volume_batch)
             total_loss = dice_loss(outputs, label_batch)
 
             optimizer_current.zero_grad()
             total_loss.backward()
             optimizer_current.step()
 
+            #------------------ logger ------------------ #
             iter_num = len(dataloader_current) * epoch_num + i_batch
             if iter_num % 10 == 0:
                 writer.add_scalar('loss/site{}'.format(client_idx + 1),
@@ -98,23 +109,29 @@ def main():
     # ------------------  initialize the trainer ------------------ #
     dataloader_clients, optimizer_clients, net_clients = initial_trainer(args)
 
+    # ------------------  decouple model parameters ------------------ #
+    params = dict(net_clients[0].named_parameters())
+    names = [name for name, param in params.items()]
+    args.head_keys = list(filter(lambda x: 'p_head' in x, names))
+    args.body_keys = list(filter(lambda x: 'p_head' not in x, names))
+    print('Body params {} Head params {}'.format(len(args.body_keys),
+                                                 len(args.head_keys)))
+
     # ------------------  start federated training ------------------ #
     best_score = 0
     writer = SummaryWriter(args.log_path)
     for epoch_num in range(args.max_epoch):
-        # ------------------  one epoch training ------------------ #
+        # ------------------  local ------------------ #
         train_one_ep(args, dataloader_clients, net_clients, optimizer_clients,
                      epoch_num, writer)
 
-        # ------------------  federation ------------------ #
+        # ------------------  server ------------------ #
         if args.fl == 'fedavg':
             update_global_model(net_clients, args.client_weight)
-        elif args.fl == 'fedrep':
-            params = dict(net_clients[0].named_parameters())
-            names = [name for name, param in params.items()]
-            private_keys = list(filter(lambda x: 'p_head' in x, names))
-            update_global_model_with_keys(net_clients, args.client_weight,
-                                          private_keys)
+        elif args.fl in ['fedrep', 'fedbabu']:
+            update_global_model_with_keys(net_clients,
+                                          args.client_weight,
+                                          private_keys=args.head_keys)
         else:
             raise NotImplementedError
 
