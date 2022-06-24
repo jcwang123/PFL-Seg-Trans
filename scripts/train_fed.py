@@ -34,10 +34,9 @@ def initial_trainer(args):
     dataloader_clients = []
     net_clients = []
     optimizer_clients = []
-    net = build_model(args)
+    global_net = build_model(args)
     for client_idx in range(args.client_num):
-        _net = deepcopy(net).to('cuda')
-
+        _net = deepcopy(global_net).to('cuda')
         dataset = args.ds_func(client_idx=client_idx, split='train')
         dataloader = DataLoader(dataset,
                                 batch_size=args.batch_size,
@@ -54,19 +53,25 @@ def initial_trainer(args):
         net_clients.append(_net)
 
         print('[INFO] Initialized success...')
-    return dataloader_clients, optimizer_clients, net_clients
+    local_net_clients = deepcopy(net_clients)
+    return dataloader_clients, optimizer_clients, local_net_clients
 
 
-def train_one_ep(args, dataloader_clients, net_clients, optimizer_clients,
-                 epoch_num, writer):
+def train_one_ep(args,
+                 dataloaders,
+                 nets,
+                 opts,
+                 epoch_num,
+                 writer,
+                 w_ditto=None):
     print = args.logger.info
     local_update_clines = list(range(args.client_num))
 
     for client_idx in local_update_clines:
-        dataloader_current = dataloader_clients[client_idx]
-        net_current = net_clients[client_idx]
+        dataloader_current = dataloaders[client_idx]
+        net_current = nets[client_idx]
         net_current.train()
-        optimizer_current = optimizer_clients[client_idx]
+        optimizer_current = opts[client_idx]
 
         for i_batch, sampled_batch in enumerate(dataloader_current):
             #------------------  obtain training data ------------------ #
@@ -75,12 +80,11 @@ def train_one_ep(args, dataloader_clients, net_clients, optimizer_clients,
 
             #------------------  obtain updated parameter at inner loop ------------------ #
             if args.fl == 'fedrep':
-                if i_batch <= 10:
-                    freeze_params(net_current, keys=args.body_keys)
-                else:
-                    freeze_params(net_current, keys=args.head_keys)
+                pass
             elif args.fl == 'fedbabu':
                 freeze_params(net_current, keys=args.head_keys)
+            elif args.fl == 'ditto':
+                w_0 = deepcopy(net_current.state_dict())
 
             outputs = net_current(volume_batch)
             total_loss = dice_loss(outputs, label_batch)
@@ -89,9 +93,17 @@ def train_one_ep(args, dataloader_clients, net_clients, optimizer_clients,
             total_loss.backward()
             optimizer_current.step()
 
+            if args.fl == 'ditto' and w_ditto is not None:
+                w_net = deepcopy(net_current.state_dict())
+                for key in w_net.keys():
+                    w_net[key] = w_net[key] - args.base_lr * (w_0[key] -
+                                                              w_ditto[key])
+                net_current.load_state_dict(w_net)
+                optimizer_current.zero_grad()
+
             #------------------ logger ------------------ #
             iter_num = len(dataloader_current) * epoch_num + i_batch
-            if iter_num % 10 == 0:
+            if iter_num % 10 == 0 and writer is not None:
                 writer.add_scalar('loss/site{}'.format(client_idx + 1),
                                   total_loss, iter_num)
                 print(
@@ -107,7 +119,13 @@ def main():
     print(args)
 
     # ------------------  initialize the trainer ------------------ #
-    dataloader_clients, optimizer_clients, net_clients = initial_trainer(args)
+    dataloader_clients, opt_clients, net_clients = initial_trainer(args)
+    if args.fl == 'ditto':
+        net_servers = deepcopy(net_clients)
+        opt_servers = [
+            torch.optim.Adam(_net.parameters(), lr=args.base_lr)
+            for _net in net_servers
+        ]
 
     # ------------------  decouple model parameters ------------------ #
     params = dict(net_clients[0].named_parameters())
@@ -121,19 +139,37 @@ def main():
     best_score = 0
     writer = SummaryWriter(args.log_path)
     for epoch_num in range(args.max_epoch):
-        # ------------------  local ------------------ #
-        train_one_ep(args, dataloader_clients, net_clients, optimizer_clients,
-                     epoch_num, writer)
+        if args.fl == 'ditto':
 
-        # ------------------  server ------------------ #
-        if args.fl == 'fedavg':
-            update_global_model(net_clients, args.client_weight)
-        elif args.fl in ['fedrep', 'fedbabu']:
-            update_global_model_with_keys(net_clients,
-                                          args.client_weight,
-                                          private_keys=args.head_keys)
+            # ------------------  Ditto ------------------ #
+            train_one_ep(args,
+                         dataloader_clients,
+                         net_servers,
+                         opt_servers,
+                         epoch_num,
+                         writer=None)
+            update_global_model(net_servers, args.client_weight)
+            w_ditto = deepcopy(net_servers[0].state_dict())
+            train_one_ep(args,
+                         dataloader_clients,
+                         net_clients,
+                         opt_clients,
+                         epoch_num,
+                         writer=writer,
+                         w_ditto=w_ditto)
         else:
-            raise NotImplementedError
+            # ------------------  Fedavg, FedRep, FedBABU ------------------ #
+            train_one_ep(args, dataloader_clients, net_clients, opt_clients,
+                         epoch_num, writer)
+
+            if args.fl == 'fedavg':
+                update_global_model(net_clients, args.client_weight)
+            elif args.fl in ['fedrep', 'fedbabu']:
+                update_global_model_with_keys(net_clients,
+                                              args.client_weight,
+                                              private_keys=args.head_keys)
+            else:
+                raise NotImplementedError
 
         # ------------------  evaluation ------------------ #
         overall_score = 0
