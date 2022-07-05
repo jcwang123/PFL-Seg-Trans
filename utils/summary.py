@@ -56,7 +56,7 @@ def create_summary(distributed_rank=0, **kwargs):
         return SummaryWriter(**kwargs)
 
 
-def create_logger(distributed_rank=0, save_dir=None):
+def create_logger(distributed_rank=0, save_dir=None, time=True):
     logger = logging.getLogger('logger')
     logger.setLevel(logging.DEBUG)
 
@@ -68,7 +68,10 @@ def create_logger(distributed_rank=0, save_dir=None):
     ch = logging.StreamHandler(stream=sys.stdout)
     ch.setLevel(logging.DEBUG)
     # formatter = logging.Formatter("%(asctime)s %(name)s %(levelname)s: %(message)s")
-    formatter = logging.Formatter("%(message)s [%(asctime)s]")
+    if time:
+        formatter = logging.Formatter("%(message)s [%(asctime)s]")
+    else:
+        formatter = logging.Formatter("%(message)s")
     ch.setFormatter(formatter)
     logger.addHandler(ch)
 

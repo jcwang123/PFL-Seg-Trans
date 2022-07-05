@@ -74,7 +74,7 @@ class _SimpleSegmentationModel(nn.Module):
         self.head = head
         self.decoder = decoder
 
-    def forward(self, x):
+    def forward(self, x, return_features=False):
         input_shape = x.shape[-2:]
         features = self.backbone(x)
         # print([f.shape for f in features])
@@ -85,7 +85,10 @@ class _SimpleSegmentationModel(nn.Module):
                           size=input_shape,
                           mode='bilinear',
                           align_corners=False)
-        return x
+        if return_features:
+            return x, features
+        else:
+            return x
 
 
 if __name__ == '__main__':

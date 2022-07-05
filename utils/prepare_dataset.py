@@ -18,9 +18,7 @@ def save_npy(data, p):
     os.makedirs(dir, exist_ok=True)
     np.save(p, data)
 
-
 def mr_norm(x, r=0.99):
-    # normalize mr image
     # x: w,h
     _x = x.flatten().tolist()
     _x.sort()

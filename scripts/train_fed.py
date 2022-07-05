@@ -7,7 +7,9 @@ import torch
 import numpy as np
 import random
 from torch.utils.data import DataLoader
+from torch.nn import KLDivLoss
 
+from networks.simclr import MLP
 from scripts.trainer_utils import set_global_grad, update_global_model, update_global_model_with_keys, check_equal, freeze_params
 from scripts.tester_utils import eval_container
 from utils.losses import dice_loss
@@ -53,8 +55,8 @@ def initial_trainer(args):
         net_clients.append(_net)
 
         print('[INFO] Initialized success...')
-    local_net_clients = deepcopy(net_clients)
-    return dataloader_clients, optimizer_clients, local_net_clients
+    # local_net_clients = deepcopy(net_clients)
+    return dataloader_clients, optimizer_clients, net_clients
 
 
 def train_one_ep(args,
@@ -63,14 +65,19 @@ def train_one_ep(args,
                  opts,
                  epoch_num,
                  writer,
-                 w_ditto=None):
+                 w_ditto=None,
+                 net_server=None,
+                 mlps=None):
     print = args.logger.info
+    kl_loss = KLDivLoss()
     local_update_clines = list(range(args.client_num))
 
     for client_idx in local_update_clines:
         dataloader_current = dataloaders[client_idx]
         net_current = nets[client_idx]
         net_current.train()
+        net_previous = deepcopy(net_current)
+        net_previous.eval()
         optimizer_current = opts[client_idx]
 
         for i_batch, sampled_batch in enumerate(dataloader_current):
@@ -79,15 +86,27 @@ def train_one_ep(args,
             ), sampled_batch['label'].cuda()
 
             #------------------  obtain updated parameter at inner loop ------------------ #
-            if args.fl == 'fedrep':
+            if args.fl == 'fedgkd':
+                with torch.no_grad():
+                    output_server = net_server(volume_batch)
+                outputs = net_current(volume_batch)
+                loss1 = dice_loss(outputs, label_batch)
+                loss2 = kl_loss(outputs, output_server)
+                total_loss = loss1 + 0.1 * loss2
+                # pass
+            elif args.fl == 'moon':
+                # todo
                 pass
-            elif args.fl == 'fedbabu':
-                freeze_params(net_current, keys=args.head_keys)
-            elif args.fl == 'ditto':
-                w_0 = deepcopy(net_current.state_dict())
+            else:
+                if args.fl == 'fedrep':
+                    pass
+                elif args.fl == 'fedbabu':
+                    freeze_params(net_current, keys=args.head_keys)
+                elif args.fl == 'ditto':
+                    w_0 = deepcopy(net_current.state_dict())
 
-            outputs = net_current(volume_batch)
-            total_loss = dice_loss(outputs, label_batch)
+                outputs = net_current(volume_batch)
+                total_loss = dice_loss(outputs, label_batch)
 
             optimizer_current.zero_grad()
             total_loss.backward()
@@ -126,6 +145,8 @@ def main():
             torch.optim.Adam(_net.parameters(), lr=args.base_lr)
             for _net in net_servers
         ]
+    else:
+        net_server = deepcopy(net_clients[0])
 
     # ------------------  decouple model parameters ------------------ #
     params = dict(net_clients[0].named_parameters())
@@ -135,12 +156,20 @@ def main():
     print('Body params {} Head params {}'.format(len(args.body_keys),
                                                  len(args.head_keys)))
 
+    # ------------------  build contrastive MLPs (MOON)------------------ #
+    if args.fl == 'moon':
+        mlps = [
+            MLP(dim=256, projection_size=256, hidden_size=1024).cuda()
+            for _ in range(args.client_num)
+        ]
+    else:
+        mlps = None
+
     # ------------------  start federated training ------------------ #
     best_score = 0
     writer = SummaryWriter(args.log_path)
     for epoch_num in range(args.max_epoch):
         if args.fl == 'ditto':
-
             # ------------------  Ditto ------------------ #
             train_one_ep(args,
                          dataloader_clients,
@@ -158,16 +187,28 @@ def main():
                          writer=writer,
                          w_ditto=w_ditto)
         else:
-            # ------------------  Fedavg, FedRep, FedBABU ------------------ #
-            train_one_ep(args, dataloader_clients, net_clients, opt_clients,
-                         epoch_num, writer)
+            # ------------------  (Fedavg, FedGKD), (FedRep, FedBABU) ------------------ #
+            train_one_ep(args,
+                         dataloader_clients,
+                         net_clients,
+                         opt_clients,
+                         epoch_num,
+                         writer,
+                         net_server=net_server,
+                         mlps=mlps)
 
-            if args.fl == 'fedavg':
+            if args.fl in ['fedavg', 'fedgkd', 'moon']:
                 update_global_model(net_clients, args.client_weight)
+                if args.fl == 'moon':
+                    update_global_model(mlps, args.client_weight)
+                net_server = deepcopy(net_clients[0])
+                net_server.eval()
+
             elif args.fl in ['fedrep', 'fedbabu']:
                 update_global_model_with_keys(net_clients,
                                               args.client_weight,
                                               private_keys=args.head_keys)
+
             else:
                 raise NotImplementedError
 
