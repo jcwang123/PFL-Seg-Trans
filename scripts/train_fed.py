@@ -9,7 +9,7 @@ import random
 from torch.utils.data import DataLoader
 from torch.nn import KLDivLoss
 
-from networks.simclr import MLP
+# from networks.simclr import MLP
 from scripts.trainer_utils import set_global_grad, update_global_model, update_global_model_with_keys, check_equal, freeze_params
 from scripts.tester_utils import eval_container
 from utils.losses import dice_loss
@@ -39,6 +39,10 @@ def initial_trainer(args):
     global_net = build_model(args)
     for client_idx in range(args.client_num):
         _net = deepcopy(global_net).to('cuda')
+        if args.load_weight is not None:
+            w_p = os.path.join('logs', args.dataset, args.load_weight,
+                               'model/Site{}_best.pth'.format(client_idx + 1))
+            _net.load_state_dict(torch.load(w_p))
         dataset = args.ds_func(client_idx=client_idx, split='train')
         dataloader = DataLoader(dataset,
                                 batch_size=args.batch_size,
@@ -76,8 +80,7 @@ def train_one_ep(args,
         dataloader_current = dataloaders[client_idx]
         net_current = nets[client_idx]
         net_current.train()
-        net_previous = deepcopy(net_current)
-        net_previous.eval()
+        w_prev = deepcopy(net_current.state_dict())
         optimizer_current = opts[client_idx]
 
         for i_batch, sampled_batch in enumerate(dataloader_current):
@@ -129,6 +132,11 @@ def train_one_ep(args,
                     'Epoch: [%d] client [%d] iteration [%d / %d] : total loss : %f'
                     % (epoch_num, client_idx, iter_num,
                        len(dataloader_current), total_loss.item()))
+        if args.fl == 'iopfl':
+            w_net = deepcopy(net_current.state_dict())
+            for key in w_net.keys():
+                w_net[key] = 0.9 * w_net[key] + w_prev[key] * 0.1
+            net_current.load_state_dict(w_net)
 
 
 def main():
@@ -153,15 +161,19 @@ def main():
     names = [name for name, param in params.items()]
     args.head_keys = list(filter(lambda x: 'p_head' in x, names))
     args.body_keys = list(filter(lambda x: 'p_head' not in x, names))
+
     print('Body params {} Head params {}'.format(len(args.body_keys),
                                                  len(args.head_keys)))
 
+    args.v_keys = list(filter(lambda x: 'p_head' in x, names))
+
     # ------------------  build contrastive MLPs (MOON)------------------ #
     if args.fl == 'moon':
-        mlps = [
-            MLP(dim=256, projection_size=256, hidden_size=1024).cuda()
-            for _ in range(args.client_num)
-        ]
+        # mlps = [
+        #     MLP(dim=256, projection_size=256, hidden_size=1024).cuda()
+        #     for _ in range(args.client_num)
+        # ]
+        pass
     else:
         mlps = None
 
@@ -187,7 +199,7 @@ def main():
                          writer=writer,
                          w_ditto=w_ditto)
         else:
-            # ------------------  (Fedavg, FedGKD), (FedRep, FedBABU) ------------------ #
+            # ------------------  (Fedavg, FedGKD), (IOP-FL, FedRep, FedBABU) ------------------ #
             train_one_ep(args,
                          dataloader_clients,
                          net_clients,
@@ -197,17 +209,19 @@ def main():
                          net_server=net_server,
                          mlps=mlps)
 
-            if args.fl in ['fedavg', 'fedgkd', 'moon']:
+            if args.fl in ['fedavg', 'fedgkd', 'moon', 'iopfl']:
                 update_global_model(net_clients, args.client_weight)
                 if args.fl == 'moon':
                     update_global_model(mlps, args.client_weight)
                 net_server = deepcopy(net_clients[0])
                 net_server.eval()
-
             elif args.fl in ['fedrep', 'fedbabu']:
                 update_global_model_with_keys(net_clients,
                                               args.client_weight,
                                               private_keys=args.head_keys)
+            elif 'ours' in args.fl:
+                from scripts.trainer_utils import update_global_model_for_trans
+                update_global_model_for_trans(net_clients, args.client_weight)
 
             else:
                 raise NotImplementedError

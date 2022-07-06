@@ -28,14 +28,13 @@ def get_args():
                         default=0.001,
                         help='basic learning rate of each site')
     parser.add_argument('--load_weight',
-                        type=int,
-                        default=0,
+                        type=np.str,
+                        default=None,
                         help='load pre-trained weight from local site')
 
     parser.add_argument('--seed', type=int, default=1337, help='random seed')
     parser.add_argument('--gpu', type=str, default='1', help='GPU to use')
     args = parser.parse_args()
-    assert (args.load_weight is not None)
     args.exp = '{}_{}_{}'.format(args.fl, args.net, args.ver)
     args.txt_path = 'logs/{}/{}/txt/'.format(args.dataset, args.exp)
     args.log_path = 'logs/{}/{}/log/'.format(args.dataset, args.exp)

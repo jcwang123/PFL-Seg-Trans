@@ -26,7 +26,7 @@ from utils.summary import create_logger, DisablePrint, create_summary
 
 from scripts.train_fed import build_model, initial_trainer
 from scripts.tester_utils import eval_container
-from scripts.trainer_utils import set_global_grad, update_global_model, update_global_model_with_keys, check_equal
+from scripts.trainer_utils import set_global_grad, update_global_model, update_global_model_with_keys, check_equal, clip_gradient
 
 
 def main():
@@ -38,8 +38,20 @@ def main():
     # ------------------  initialize the trainer ------------------ #
     dataloader_clients, opt_clients, net_clients = initial_trainer(args)
 
-    # ------------------  start federated training ------------------ #
+    # ------------------  initialize the scores ------------------ #
     best_score = np.zeros((len(dataloader_clients), ))
+    for site_index in range(args.client_num):
+        this_net = net_clients[site_index]
+        this_net.eval()
+        print("[Test] epoch {} testing Site {}".format(-1, site_index + 1))
+
+        score_values = eval_container(site_index, this_net, args)
+        best_score[site_index] = np.mean(score_values[0])
+        save_mode_path = os.path.join(args.model_path,
+                                      'Site{}_best.pth'.format(site_index + 1))
+        torch.save(net_clients[site_index].state_dict(), save_mode_path)
+
+    # ------------------  start federated training ------------------ #
     writer = SummaryWriter(args.log_path)
     for epoch_num in range(args.max_epoch):
         for client_idx in range(args.client_num):
@@ -60,6 +72,7 @@ def main():
 
                 optimizer_current.zero_grad()
                 total_loss.backward()
+                # clip_gradient(optimizer_current, 0.5)
                 optimizer_current.step()
 
                 iter_num = len(dataloader_current) * epoch_num + i_batch

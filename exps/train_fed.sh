@@ -28,3 +28,10 @@ python scripts/train_fed.py --fl ditto --net pvtb0_fpn --ver 0 --dataset polyp -
 
 # ========================= FedGKD Ditto network =========================#
 python scripts/train_fed.py --fl fedgkd --net pvtb0_fpn --ver 0 --dataset polyp --gpu 1
+
+# ========================= IOP-FL  network =========================#
+python scripts/train_fed.py --fl iopfl --net pvtb0_fpn --ver 0 --dataset polyp --gpu 1
+
+# ========================= Ours =========================#
+# personalize the value embs
+python scripts/train_fed.py --fl ours_v0 --net pvtb0_fpn --ver 0 --dataset polyp --gpu 0
