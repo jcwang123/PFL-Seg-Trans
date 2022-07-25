@@ -103,6 +103,20 @@ def main():
             print('[INFO] IoU score {:.4f} Best score {:.4f}'.format(
                 np.mean(score_values[0]), best_score[site_index]))
 
+    # ------------------  final test ------------------ #
+    for site_index in range(args.client_num):
+        this_net = net_clients[site_index]
+        this_net.eval()
+        this_net.load_state_dict(
+            torch.load(args.model_path +
+                       '/Site{}_best.pth'.format(site_index + 1)))
+        dice, haus, iou, assd = eval_container(site_index,
+                                               this_net,
+                                               args,
+                                               info=True)
+        np.save(args.npy_path + f'/site_{site_index}.npy',
+                np.concatenate([dice, haus, iou, assd], axis=0))
+
 
 if __name__ == "__main__":
     main()

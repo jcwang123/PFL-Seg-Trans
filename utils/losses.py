@@ -3,6 +3,34 @@ from torch.nn import functional as F
 import numpy as np
 
 
+def weighted_bce_loss(score, target, weight):
+    target = target.float()
+    smooth = 1e-5
+    score = torch.clamp(score, smooth, 1 - smooth)
+    loss = 0
+    for i in range(target.shape[1]):
+        loss = -(target * torch.log(score) +
+                 (1 - target) * torch.log(1 - score)) * weight
+        loss = torch.sum(loss)
+    loss /= target.shape[1] * target.shape[0]
+    return loss
+
+
+def weighted_dice_loss(score, target, weight):
+    target = target.float()
+    smooth = 1e-5
+
+    loss = 0
+    for i in range(target.shape[1]):
+        intersect = torch.sum(score[:, i, ...] * target[:, i, ...] *
+                              weight[:, i, ...])
+        z_sum = torch.sum(score[:, i, ...] * weight[:, i, ...])
+        y_sum = torch.sum(target[:, i, ...] * weight[:, i, ...])
+        loss += 1 - (2 * intersect + smooth) / (z_sum + y_sum + smooth)
+    loss /= target.shape[1]
+    return loss
+
+
 def dice_loss(score, target):
     target = target.float()
     smooth = 1e-5

@@ -10,7 +10,7 @@ from torch.utils.data import DataLoader
 from torch.nn import KLDivLoss
 
 # from networks.simclr import MLP
-from scripts.trainer_utils import set_global_grad, update_global_model, update_global_model_with_keys, check_equal, freeze_params
+from scripts.trainer_utils import set_global_grad, update_global_model, update_global_model_with_keys, check_equal, freeze_params, clip_gradient
 from scripts.tester_utils import eval_container
 from utils.losses import dice_loss
 from config.base import get_args
@@ -43,6 +43,10 @@ def initial_trainer(args):
             w_p = os.path.join('logs', args.dataset, args.load_weight,
                                'model/Site{}_best.pth'.format(client_idx + 1))
             _net.load_state_dict(torch.load(w_p))
+        if args.resume:
+            w_p = os.path.join('logs', args.dataset, args.load_weight,
+                               'model/Site{}_best.pth'.format(client_idx + 1))
+            _net.load_state_dict(torch.load(w_p))
         dataset = args.ds_func(client_idx=client_idx, split='train')
         dataloader = DataLoader(dataset,
                                 batch_size=args.batch_size,
@@ -71,6 +75,7 @@ def train_one_ep(args,
                  writer,
                  w_ditto=None,
                  net_server=None,
+                 best_models=None,
                  mlps=None):
     print = args.logger.info
     kl_loss = KLDivLoss()
@@ -113,6 +118,7 @@ def train_one_ep(args,
 
             optimizer_current.zero_grad()
             total_loss.backward()
+            clip_gradient(optimizer_current, 1)
             optimizer_current.step()
 
             if args.fl == 'ditto' and w_ditto is not None:
@@ -149,8 +155,9 @@ def main():
     dataloader_clients, opt_clients, net_clients = initial_trainer(args)
     if args.fl == 'ditto':
         net_servers = deepcopy(net_clients)
+
         opt_servers = [
-            torch.optim.Adam(_net.parameters(), lr=args.base_lr)
+            torch.optim.AdamW(_net.parameters(), lr=args.base_lr)
             for _net in net_servers
         ]
     else:
@@ -180,7 +187,7 @@ def main():
     # ------------------  start federated training ------------------ #
     best_score = 0
     writer = SummaryWriter(args.log_path)
-    for epoch_num in range(args.max_epoch):
+    for epoch_num in range(args.resume_ep, args.max_epoch):
         if args.fl == 'ditto':
             # ------------------  Ditto ------------------ #
             train_one_ep(args,
@@ -221,8 +228,10 @@ def main():
                                               private_keys=args.head_keys)
             elif 'ours' in args.fl:
                 from scripts.trainer_utils import update_global_model_for_trans
-                update_global_model_for_trans(net_clients, args.client_weight)
-
+                update_global_model_for_trans(net_clients,
+                                              args.client_weight,
+                                              part='q')
+                pass
             else:
                 raise NotImplementedError
 
@@ -254,6 +263,20 @@ def main():
                            save_mode_path)
         print('[INFO] Dice Overall: {:.2f} Best Dice {:.2f}'.format(
             overall_score * 100, best_score * 100))
+
+    # ------------------  final test ------------------ #
+    for site_index in range(args.client_num):
+        this_net = net_clients[site_index]
+        this_net.eval()
+        this_net.load_state_dict(
+            torch.load(args.model_path +
+                       '/Site{}_best.pth'.format(site_index + 1)))
+        dice, haus, iou, assd = eval_container(site_index,
+                                               this_net,
+                                               args,
+                                               info=True)
+        np.save(args.npy_path + f'/site_{site_index}.npy',
+                np.concatenate([dice, haus, iou, assd], axis=0))
 
 
 if __name__ == "__main__":

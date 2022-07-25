@@ -98,7 +98,7 @@ class RandomNoise(object):
 
 
 if __name__ == '__main__':
-    for _id in range(6):
+    for _id in range(4):
         x = Dataset(_id, 'train')
         y = Dataset(_id, 'test')
         n = len(x.image_list) + len(y.image_list)
