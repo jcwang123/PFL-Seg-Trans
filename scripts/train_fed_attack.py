@@ -10,7 +10,7 @@ from torch.utils.data import DataLoader
 from torch.nn import KLDivLoss
 
 # from networks.simclr import MLP
-from scripts.trainer_utils import set_global_grad, update_global_model, update_global_model_with_keys, check_equal, freeze_params, clip_gradient
+from scripts.trainer_utils import set_global_grad, update_global_model, update_global_model_with_keys, check_equal, freeze_params, clip_gradient, attack
 from scripts.tester_utils import eval_container
 from utils.losses import dice_loss
 from config.base import get_args
@@ -97,40 +97,13 @@ def train_one_ep(args,
             ), sampled_batch['label'].cuda()
 
             #------------------  obtain updated parameter at inner loop ------------------ #
-            if args.fl == 'fedgkd':
-                with torch.no_grad():
-                    output_server = net_server(volume_batch)
-                outputs = net_current(volume_batch)
-                loss1 = dice_loss(outputs, label_batch)
-                loss2 = kl_loss(outputs, output_server)
-                total_loss = loss1 + 0.1 * loss2
-                # pass
-            elif args.fl == 'moon':
-                # todo
-                pass
-            else:
-                if args.fl == 'fedrep':
-                    pass
-                elif args.fl == 'fedbabu':
-                    freeze_params(net_current, keys=args.head_keys)
-                elif args.fl == 'ditto':
-                    w_0 = deepcopy(net_current.state_dict())
-
-                outputs = net_current(volume_batch)
-                total_loss = dice_loss(outputs, label_batch)
+            outputs = net_current(volume_batch)
+            total_loss = dice_loss(outputs, label_batch)
 
             optimizer_current.zero_grad()
             total_loss.backward()
             clip_gradient(optimizer_current, 1)
             optimizer_current.step()
-
-            if args.fl == 'ditto' and w_ditto is not None:
-                w_net = deepcopy(net_current.state_dict())
-                for key in w_net.keys():
-                    w_net[key] = w_net[key] - args.base_lr * (w_0[key] -
-                                                              w_ditto[key])
-                net_current.load_state_dict(w_net)
-                optimizer_current.zero_grad()
 
             #------------------ logger ------------------ #
             iter_num = len(dataloader_current) * epoch_num + i_batch
@@ -141,11 +114,6 @@ def train_one_ep(args,
                     'Epoch: [%d] client [%d] iteration [%d / %d] : total loss : %f'
                     % (epoch_num, client_idx, iter_num,
                        len(dataloader_current), total_loss.item()))
-        if args.fl == 'iopfl':
-            w_net = deepcopy(net_current.state_dict())
-            for key in w_net.keys():
-                w_net[key] = 0.9 * w_net[key] + w_prev[key] * 0.1
-            net_current.load_state_dict(w_net)
 
 
 def main():
@@ -189,53 +157,44 @@ def main():
 
     # ------------------  start federated training ------------------ #
     best_score = 0
+    attack_site = 0
     writer = SummaryWriter(args.log_path)
     for epoch_num in range(args.resume_ep, args.max_epoch):
-        if args.fl == 'ditto':
-            # ------------------  Ditto ------------------ #
-            train_one_ep(args,
-                         dataloader_clients,
-                         net_servers,
-                         opt_servers,
-                         epoch_num,
-                         writer=None)
-            update_global_model(net_servers, args.client_weight)
-            w_ditto = deepcopy(net_servers[0].state_dict())
-            train_one_ep(args,
-                         dataloader_clients,
-                         net_clients,
-                         opt_clients,
-                         epoch_num,
-                         writer=writer,
-                         w_ditto=w_ditto)
-        else:
-            # ------------------  (Fedavg, FedGKD), (IOP-FL, FedRep, FedBABU) ------------------ #
-            train_one_ep(args,
-                         dataloader_clients,
-                         net_clients,
-                         opt_clients,
-                         epoch_num,
-                         writer,
-                         net_server=net_server,
-                         mlps=mlps)
 
-            if args.fl in ['fedavg', 'fedgkd', 'moon', 'iopfl']:
-                update_global_model(net_clients, args.client_weight)
-                if args.fl == 'moon':
-                    update_global_model(mlps, args.client_weight)
-                net_server = deepcopy(net_clients[0])
-                net_server.eval()
-            elif args.fl in ['fedrep', 'fedbabu']:
-                update_global_model_with_keys(net_clients,
-                                              args.client_weight,
-                                              private_keys=args.head_keys)
-            elif 'ours' in args.fl:
-                from scripts.trainer_utils import update_global_model_for_trans
-                update_global_model_for_trans(net_clients,
-                                              args.client_weight,
-                                              part='q')
-            else:
-                raise NotImplementedError
+        ori_params = dict(net_clients[attack_site].named_parameters())
+        # ------------------  (Fedavg, FedGKD), (IOP-FL, FedRep, FedBABU) ------------------ #
+        train_one_ep(args,
+                     dataloader_clients,
+                     net_clients,
+                     opt_clients,
+                     epoch_num,
+                     writer,
+                     net_server=net_server,
+                     mlps=mlps)
+
+        # attack
+        attack(net_clients, 0, ori_params)
+        attack(net_clients, 1, ori_params)
+        # attack(net_clients, 2, ori_params)
+        # attack(net_clients, 3, ori_params)
+
+        if args.fl in ['fedavg', 'fedgkd', 'moon', 'iopfl']:
+            update_global_model(net_clients, args.client_weight)
+            if args.fl == 'moon':
+                update_global_model(mlps, args.client_weight)
+            net_server = deepcopy(net_clients[0])
+            net_server.eval()
+        elif args.fl in ['fedrep', 'fedbabu']:
+            update_global_model_with_keys(net_clients,
+                                          args.client_weight,
+                                          private_keys=args.head_keys)
+        elif 'ours' in args.fl:
+            from scripts.trainer_utils import update_global_model_for_trans
+            update_global_model_for_trans(net_clients,
+                                          args.client_weight,
+                                          part='q')
+        else:
+            raise NotImplementedError
 
         # ------------------  evaluation ------------------ #
         overall_score = 0

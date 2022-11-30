@@ -77,12 +77,13 @@ def eval_container(site_index, test_net, args, info=False):
             for image_name in image_names:
                 image = np.load(os.path.join(filename, image_name))[np.newaxis,
                                                                     np.newaxis]
+                image = np.repeat(image, 3, 1)
                 mask = np.load(
                     os.path.join(filename.replace('image', 'mask'),
                                  image_name))
                 image = torch.from_numpy(image).cuda().float()
                 pred = test_net(image).cpu().numpy()[0, 0] > 0.5
-                pred = _connectivity_region_analysis(pred)
+                # pred = _connectivity_region_analysis(pred)
                 preds.append(pred)
                 masks.append(mask)
             preds = np.array(preds)

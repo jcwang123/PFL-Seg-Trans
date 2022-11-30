@@ -7,12 +7,10 @@ def weighted_bce_loss(score, target, weight):
     target = target.float()
     smooth = 1e-5
     score = torch.clamp(score, smooth, 1 - smooth)
-    loss = 0
-    for i in range(target.shape[1]):
-        loss = -(target * torch.log(score) +
-                 (1 - target) * torch.log(1 - score)) * weight
-        loss = torch.sum(loss)
-    loss /= target.shape[1] * target.shape[0]
+
+    loss = -(target * torch.log(score) +
+             (1 - target) * torch.log(1 - score)) * weight
+    loss = torch.mean(loss)
     return loss
 
 

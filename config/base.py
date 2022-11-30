@@ -34,11 +34,11 @@ def get_args(debug=False):
                         help='batch_size per gpu')
     parser.add_argument('--base_lr',
                         type=float,
-                        default=0.0001,
+                        default=0.001,
                         help='basic learning rate of each site')
     parser.add_argument('--load_weight',
                         type=np.str,
-                        default='ours_q_pvtb0_fpn_0',
+                        default=None,
                         help='load pre-trained weight from local site')
     parser.add_argument('--resume',
                         type=bool,
@@ -48,11 +48,16 @@ def get_args(debug=False):
                         type=int,
                         default=0,
                         help='resume training epochs')
+    parser.add_argument('--lamb',
+                        type=float,
+                        default=0,
+                        help='calibration weight')
+
     parser.add_argument('--seed', type=int, default=1337, help='random seed')
     parser.add_argument('--gpu', type=str, default='1', help='GPU to use')
     args = parser.parse_args()
 
-    args.exp = '{}_{}_{}'.format(args.fl, args.net, args.ver)
+    args.exp = '{}_{}_{}_{}'.format(args.fl, args.lamb, args.net, args.ver)
     args.txt_path = 'logs/{}/{}/txt/'.format(args.dataset, args.exp)
     args.log_path = 'logs/{}/{}/log/'.format(args.dataset, args.exp)
     args.model_path = 'logs/{}/{}/model/'.format(args.dataset, args.exp)
@@ -85,9 +90,8 @@ def get_args(debug=False):
         args.num_classes = 1
         args.c_in = 3
     else:
-        raise NotImplementedError
+        print('......')
 
-    assert args.num_classes > 0 and args.client_num > 1
     args.client_weight = np.ones((args.client_num, )) / args.client_num
     args.ds_func = Dataset
     return args

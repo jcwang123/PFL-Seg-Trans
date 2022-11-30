@@ -102,7 +102,7 @@ class Attention(nn.Module):
             if m.bias is not None:
                 m.bias.data.zero_()
 
-    def forward(self, x, H, W):
+    def forward(self, x, H, W, rt_info=False):
         B, N, C = x.shape
         q = self.q(x).reshape(B, N, self.num_heads,
                               C // self.num_heads).permute(0, 2, 1, 3)
@@ -128,7 +128,10 @@ class Attention(nn.Module):
         x = self.proj(x)
         x = self.proj_drop(x)
 
-        return x
+        if rt_info:
+            return x, attn
+        else:
+            return x, None
 
 
 class Block(nn.Module):
@@ -180,11 +183,11 @@ class Block(nn.Module):
             if m.bias is not None:
                 m.bias.data.zero_()
 
-    def forward(self, x, H, W):
-        x = x + self.drop_path(self.attn(self.norm1(x), H, W))
+    def forward(self, x, H, W, rt_info=False):
+        f, m = self.attn(self.norm1(x), H, W, rt_info)
+        x = x + self.drop_path(f)
         x = x + self.drop_path(self.mlp(self.norm2(x), H, W))
-
-        return x
+        return x, m
 
 
 class OverlapPatchEmbed(nn.Module):
@@ -416,15 +419,18 @@ class PyramidVisionTransformerImpr(nn.Module):
     #             pos_embed.reshape(1, patch_embed.H, patch_embed.W, -1).permute(0, 3, 1, 2),
     #             size=(H, W), mode="bilinear").reshape(1, -1, H * W).permute(0, 2, 1)
 
-    def forward_features(self, x):
+    def forward_features(self, x, rt_info=False):
         B = x.shape[0]
         outs = []
 
+        maps = []
         # stage 1
         x, H, W = self.patch_embed1(x)
         # print(H, W)
         for i, blk in enumerate(self.block1):
-            x = blk(x, H, W)
+            x, m = blk(x, H, W, rt_info)
+            maps.append(m)
+
         x = self.norm1(x)
         x = x.reshape(B, H, W, -1).permute(0, 3, 1, 2).contiguous()
         outs.append(x)
@@ -432,7 +438,8 @@ class PyramidVisionTransformerImpr(nn.Module):
         # stage 2
         x, H, W = self.patch_embed2(x)
         for i, blk in enumerate(self.block2):
-            x = blk(x, H, W)
+            x, m = blk(x, H, W, rt_info)
+            maps.append(m)
         x = self.norm2(x)
         x = x.reshape(B, H, W, -1).permute(0, 3, 1, 2).contiguous()
         outs.append(x)
@@ -440,7 +447,8 @@ class PyramidVisionTransformerImpr(nn.Module):
         # stage 3
         x, H, W = self.patch_embed3(x)
         for i, blk in enumerate(self.block3):
-            x = blk(x, H, W)
+            x, m = blk(x, H, W, rt_info)
+            maps.append(m)
         x = self.norm3(x)
         x = x.reshape(B, H, W, -1).permute(0, 3, 1, 2).contiguous()
         outs.append(x)
@@ -448,20 +456,19 @@ class PyramidVisionTransformerImpr(nn.Module):
         # stage 4
         x, H, W = self.patch_embed4(x)
         for i, blk in enumerate(self.block4):
-            x = blk(x, H, W)
+            x, m = blk(x, H, W, rt_info)
+            maps.append(m)
         x = self.norm4(x)
         x = x.reshape(B, H, W, -1).permute(0, 3, 1, 2).contiguous()
         outs.append(x)
 
-        return outs
+        return outs, maps
 
         # return x.mean(dim=1)
 
-    def forward(self, x):
-        x = self.forward_features(x)
-        # x = self.head(x)
-
-        return x
+    def forward(self, x, rt_info=False):
+        x, maps = self.forward_features(x, rt_info=rt_info)
+        return x, maps
 
 
 class DWConv(nn.Module):

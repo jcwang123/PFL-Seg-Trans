@@ -38,6 +38,7 @@ class Dataset(Dataset):
         idx = random.randint(0, len(self.image_list) - 1)
         raw_file = self.image_list[idx]
         image = np.load(raw_file)[np.newaxis]
+        image = np.repeat(image, 3, 0)
         mask = np.load(raw_file.replace('image', 'mask'))[np.newaxis]
         image = torch.from_numpy(image)
         mask = torch.from_numpy(mask)

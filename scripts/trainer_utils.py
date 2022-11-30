@@ -13,9 +13,13 @@ def compute_pred_uncertainty(net_clients, images):
         b, c, h, w = pred.size()
         preds.append(pred.unsqueeze(0))
     preds = torch.cat(preds, dim=0)
+
     umap = torch.std(preds, dim=0)
-    umap = umap.view(b, c, h * w)
-    umap = torch.softmax(umap, dim=-1)
+    # print(umap.max())
+    if umap.max() > 0:
+        umap = umap / umap.max()
+    # umap = umap.view(b, c, h * w)
+    # umap = torch.softmax(umap, dim=-1)
     umap = umap.view(b, c, h, w)
     return umap, preds
 
@@ -68,6 +72,15 @@ def freeze_params(net, keys):
             dict(net.named_parameters())[name].requires_grad = False
         else:
             dict(net.named_parameters())[name].requires_grad = True
+
+
+def attack(net_clients, attack_site, ori_params):
+    print('Attack Site Gradients Opposite----')
+    params = dict(net_clients[attack_site].named_parameters())
+
+    for name, param in params.items():
+        new_param_data = params[name].data * 2 - ori_params[name].data
+        params[name].data.copy_(new_param_data)
 
 
 def update_global_model(net_clients, client_weight):

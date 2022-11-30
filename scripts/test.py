@@ -90,7 +90,7 @@ if __name__ == "__main__":
                                                this_net,
                                                args,
                                                info=True)
-
+        print(dice.shape)
         np.save(args.npy_path + f'/site_{site_index}.npy',
                 np.concatenate([dice, haus, iou, assd], axis=0))
 

@@ -38,7 +38,7 @@ class Dataset(Dataset):
         mask = np.load(raw_file.replace('image', 'mask')) > 0
         image = torch.from_numpy(image) / 255.
         mask = torch.from_numpy(mask).unsqueeze(0)
-        sample = {"image": image, "label": mask}
+        sample = {"image": image, "label": mask, "name": raw_file}
         if self.transform is not None:
             sample = self.transform(sample)
         return sample
