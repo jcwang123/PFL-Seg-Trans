@@ -25,3 +25,10 @@ python scripts/test.py --fl ours_q_ft --net pvtb0_fpn --ver 0 --dataset polyp --
 python scripts/test.py --fl ours_q_bd_ft --net pvtb0_fpn --ver 6 --dataset polyp --gpu 0
 
 python scripts/test.py --fl ours_q_bd_ft --net pvtb0_fpn --ver 1.0_0 --dataset polyp --gpu 0
+
+
+#--------------------------------- generalization ability ---------------------------------#
+python scripts/gen_test.py --fl fedavg --net pvtb0_fpn --ver 0 --dataset polyp --gpu 0
+python scripts/gen_test.py --fl fedbabu --net pvtb0_fpn --ver 0 --dataset polyp --gpu 0
+python scripts/gen_test.py --fl iopfl --net pvtb0_fpn --ver 0 --dataset polyp --gpu 0
+python scripts/gen_test.py --fl ours_q_bd_ft_1.0 --net pvtb0_fpn --ver 0 --dataset polyp --gpu 0

@@ -18,6 +18,7 @@ def save_npy(data, p):
     os.makedirs(dir, exist_ok=True)
     np.save(p, data)
 
+
 def mr_norm(x, r=0.99):
     # x: w,h
     _x = x.flatten().tolist()
@@ -159,7 +160,35 @@ def prepare_polyp(save_dir):
                         site_p, train_or_test, file_name))
 
 
+def prepare_polyp_gen(save_dir='/raid/wjc/data/SpecializedFedSeg'):
+    files = os.listdir('/raid/wjc/data/polyp/data_C1/images_C1/')
+    for file in files:
+        site_p = 'Site5'
+
+        file_name = file.split('/')[-1][:-4]
+        img = cv2.imread('/raid/wjc/data/polyp/data_C1/images_C1/' +
+                         file)[:, :, ::-1]
+        img = cv2.resize(img, (384, 384), cv2.INTER_CUBIC)
+
+        mask = np.array((cv2.imread(
+            '/raid/wjc/data/polyp/data_C1/masks_C1/' + file_name + '_mask.jpg',
+            0) > 0) * 1,
+                        dtype='uint8')
+        if mask.sum() < 10:
+            continue
+        mask = cv2.resize(mask, (384, 384), cv2.INTER_NEAREST)
+
+        save_npy(
+            img, save_dir +
+            '/polyp/{}/{}/image/{}'.format(site_p, 'test', file_name))
+        save_npy(
+            mask, save_dir +
+            '/polyp/{}/{}/mask/{}'.format(site_p, 'test', file_name))
+
+
 if __name__ == '__main__':
     # prepare_fundus(save_dir='/raid/wjc/data/SpecializedFedSeg')
     # prepare_pmr(save_dir='/raid/wjc/data/SpecializedFedSeg')
-    prepare_polyp(save_dir='/raid/wjc/data/SpecializedFedSeg')
+    # prepare_polyp(save_dir='/raid/wjc/data/SpecializedFedSeg')
+
+    prepare_polyp_gen(save_dir='/raid/wjc/data/SpecializedFedSeg')

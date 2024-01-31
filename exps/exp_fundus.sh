@@ -18,8 +18,10 @@
 # python scripts/test.py --fl fedgkd --net pvtb0_fpn --ver 0 --dataset fundus --gpu 0
 # python scripts/test.py --fl iopfl --net pvtb0_fpn --ver 0 --dataset fundus --gpu 0
 # python scripts/test.py --fl ours_q --net pvtb0_fpn --ver 0 --dataset fundus --gpu 0
+python scripts/test.py --fl fedavg_ft_0 --net pvtb0_fpn --ver 0 --dataset fundus --gpu 0
 
 # ------------------------------ finetune ------------------------------#
+python scripts/train.py --fl fedavg_ft --net pvtb0_fpn --ver 0 --dataset fundus --load_weight fedavg_pvtb0_fpn_0 --max_epoch 30 --base_lr 0.0001 --gpu 1
 python scripts/train.py --fl ditto_ft --net pvtb0_fpn --ver 0 --dataset fundus --load_weight ditto_pvtb0_fpn_0 --max_epoch 30 --base_lr 0.0001 --gpu 1
 python scripts/train.py --fl fedrep_ft --net pvtb0_fpn --ver 0 --dataset fundus --load_weight fedrep_pvtb0_fpn_0 --max_epoch 30 --base_lr 0.0001 --gpu 1
 python scripts/train.py --fl fedbabu_ft --net pvtb0_fpn --ver 0 --dataset fundus --load_weight fedbabu_pvtb0_fpn_0 --max_epoch 30 --base_lr 0.0001 --gpu 1

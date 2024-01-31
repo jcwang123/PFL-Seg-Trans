@@ -13,6 +13,7 @@ from segmentation_models_pytorch.decoders.unet.decoder import UnetDecoder
 import segmentation_models_pytorch as smp
 import timm
 
+from scripts.trainer_utils import compute_pred_uncertainty_by_features
 # from segmentation_models_pytorch.decoders.unet.decoder import UnetDecoder
 
 
@@ -80,27 +81,48 @@ class _SimpleSegmentationModel(nn.Module):
         self.backbone = backbone
         self.head = head
         self.decoder = decoder
+        self.pcs = None
+        self.hc = None
+        self.memory_all_nets = None
+        self.emb = None
 
-    def forward(self, x, return_features=False, return_att_maps=False):
+    def forward(self,
+                x,
+                return_features=False,
+                return_att_maps=False,
+                return_out=False):
         input_shape = x.shape[-2:]
         if self.trans:
             features, maps = self.backbone(x, rt_info=return_att_maps)
         else:
             features = self.backbone(x)
         # print([f.shape for f in features])
-        x = self.decoder(features[-4], features[-3], features[-2],
-                         features[-1])
-        x = self.head(x)
-        x = F.interpolate(x,
-                          size=input_shape,
-                          mode='bilinear',
-                          align_corners=False)
-        if return_features:
-            return x, features
-        elif return_att_maps:
-            return x, maps
+        if self.emb is not None:
+            assert self.pcs is not None
+            features[-1] = self.pcs(features[-1], self.emb)[0]
+
+        out_features = self.decoder(features[-4], features[-3], features[-2],
+                                    features[-1])
+        if self.memory_all_nets is not None:
+            assert self.hc is not None
+            un_map, preds = compute_pred_uncertainty_by_features(
+                net_clients=self.memory_all_nets, features=out_features)
+            outputs = torch.mean(preds, dim=0)
+            outputs = self.hc(un_map, outputs.detach(), out_features.detach())
         else:
-            return x
+            outputs = self.head(out_features)
+        outputs = F.interpolate(outputs,
+                                size=input_shape,
+                                mode='bilinear',
+                                align_corners=False)
+        if return_features:
+            return outputs, features
+        elif return_out:
+            return outputs, out_features
+        elif return_att_maps:
+            return outputs, maps
+        else:
+            return outputs
 
 
 if __name__ == '__main__':

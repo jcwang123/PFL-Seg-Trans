@@ -7,7 +7,7 @@ import torch
 import numpy as np
 import random
 from torch.utils.data import DataLoader
-from torch.nn import KLDivLoss
+from torch.nn import KLDivLoss, MSELoss
 
 # from networks.simclr import MLP
 from scripts.trainer_utils import set_global_grad, update_global_model, update_global_model_with_keys, check_equal, freeze_params, clip_gradient
@@ -21,10 +21,14 @@ from copy import deepcopy
 
 def build_model(args):
     from networks.FPN.model import BuildFPN
+    from networks.Calibration.modules import HeadCalibration, PersonalizedChannelSelection
     encoder = args.net.split('_')[0]
     decoder = args.net.split('_')[1]
     print("build net with encoder {} and decoder {}.".format(encoder, decoder))
     net = BuildFPN(args.num_classes, encoder, decoder)
+    if 'fedlc' in args.fl:
+        net.pcs = PersonalizedChannelSelection(256, args.client_num)
+        net.hc = HeadCalibration(args.num_classes, 128)
     return net
 
 
@@ -82,6 +86,7 @@ def train_one_ep(args,
                  mlps=None):
     print = args.logger.info
     kl_loss = KLDivLoss()
+    c_loss = MSELoss()
     local_update_clines = list(range(args.client_num))
 
     for client_idx in local_update_clines:
@@ -108,6 +113,32 @@ def train_one_ep(args,
             elif args.fl == 'moon':
                 # todo
                 pass
+            elif args.fl == 'fedlc':
+                outputs = net_current(volume_batch)
+                seg_loss = dice_loss(outputs, label_batch)
+
+                # site contrast loss
+                features = net_current.backbone(volume_batch)[0]
+                # print(features[-1])
+                # print(features[-1].shape)
+                tmp_feature = deepcopy(features[-1].detach())
+
+                hmaps = []
+                for i_emb in range(args.client_num):
+                    _site_emb = nets[i_emb].emb
+                    _, _hmap = net_current.pcs(tmp_feature, _site_emb)
+                    if not i_emb == client_idx:
+                        _hmap = _hmap.detach()
+                    hmaps.append(_hmap)
+                contr_loss = 0
+                for i_emb in range(args.client_num):
+                    if not i_emb == client_idx:
+                        contr_loss = contr_loss + c_loss(
+                            hmaps[i_emb], hmaps[client_idx])
+                contr_loss = -contr_loss / (args.client_num - 1)
+
+                total_loss = seg_loss + contr_loss * 0.1
+
             else:
                 if args.fl == 'fedrep':
                     pass
@@ -163,6 +194,15 @@ def main():
             torch.optim.AdamW(_net.parameters(), lr=args.base_lr)
             for _net in net_servers
         ]
+    elif args.fl == 'fedlc':
+        local_update_clines = list(range(args.client_num))
+        # initialize site embeddings
+        for client_idx in local_update_clines:
+            emb = np.zeros((1, args.client_num))
+            emb[:, client_idx] = 1
+            emb = torch.from_numpy(emb).float()
+            net_clients[client_idx].emb = deepcopy(emb)
+        net_server = deepcopy(net_clients[0])
     else:
         net_server = deepcopy(net_clients[0])
 
@@ -172,10 +212,10 @@ def main():
     args.head_keys = list(filter(lambda x: 'p_head' in x, names))
     args.body_keys = list(filter(lambda x: 'p_head' not in x, names))
 
-    print('Body params {} Head params {}'.format(len(args.body_keys),
-                                                 len(args.head_keys)))
-
     args.v_keys = list(filter(lambda x: 'p_head' in x, names))
+    args.lc_keys = list(filter(lambda x: 'hc' in x or 'p_head' in x, names))
+    print('Body params {} Head params {} LC params {}'.format(
+        len(args.body_keys), len(args.head_keys), len(args.lc_keys)))
 
     # ------------------  build contrastive MLPs (MOON)------------------ #
     if args.fl == 'moon':
@@ -225,6 +265,10 @@ def main():
                     update_global_model(mlps, args.client_weight)
                 net_server = deepcopy(net_clients[0])
                 net_server.eval()
+            elif args.fl in ['fedlc']:
+                update_global_model_with_keys(net_clients,
+                                              args.client_weight,
+                                              private_keys=args.lc_keys)
             elif args.fl in ['fedrep', 'fedbabu']:
                 update_global_model_with_keys(net_clients,
                                               args.client_weight,

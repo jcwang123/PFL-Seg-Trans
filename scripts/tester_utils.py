@@ -48,7 +48,6 @@ def eval_container(site_index, test_net, args, info=False):
         test_data_list = glob(
             '/raid/wjc/data/SpecializedFedSeg/{}/Site{}/test/image/*'.format(
                 args.dataset, site_index + 1))
-    dice_array = []
 
     score_values = np.zeros(
         (len(eval_funcs), args.num_classes, len(test_data_list)))
@@ -83,7 +82,6 @@ def eval_container(site_index, test_net, args, info=False):
                                  image_name))
                 image = torch.from_numpy(image).cuda().float()
                 pred = test_net(image).cpu().numpy()[0, 0] > 0.5
-                # pred = _connectivity_region_analysis(pred)
                 preds.append(pred)
                 masks.append(mask)
             preds = np.array(preds)
@@ -99,11 +97,11 @@ def eval_container(site_index, test_net, args, info=False):
 
             mask = np.load(filename.replace('image', 'mask')) > 0.5
             pred = test_net(image).cpu().numpy()[0, 0] > 0.5
+
             if np.max(pred) == 0:
                 pred[0, 0] = 1
             for e_i in range(len(eval_funcs)):
                 score_values[e_i, 0, fid] = eval_funcs[e_i](pred, mask)
-
     if info:
         return score_values
     else:

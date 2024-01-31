@@ -1,32 +1,28 @@
-from copy import deepcopy
-import os
-import sys
+import os, sys
 
 sys.path.insert(0, os.path.dirname(__file__) + '/..')
 from tqdm import tqdm
-from tensorboardX import SummaryWriter
-
 import matplotlib.pyplot as plt
 import numpy as np
-
 from glob import glob
-
-import torch
-from config.base import get_args
-
-from utils.losses import dice_loss, weighted_dice_loss, weighted_bce_loss
-from utils.summary import create_logger, DisablePrint, create_summary
-
-from scripts.train_fed import build_model, initial_trainer
-from scripts.tester_utils import eval_container
-from scripts.trainer_utils import clip_gradient, compute_pred_uncertainty
+from copy import deepcopy
 
 
 def main():
     # ------------------  create args ------------------ #
+    from config.base import get_args
     args = get_args()
     print = args.logger.info
     print(args)
+
+    from utils.losses import dice_loss, weighted_dice_loss, weighted_bce_loss
+    from utils.summary import create_logger, DisablePrint, create_summary
+
+    from scripts.train_fed import build_model, initial_trainer
+    from scripts.tester_utils import eval_container
+    from scripts.trainer_utils import clip_gradient, compute_pred_uncertainty, compute_pred_uncertainty_by_features
+    from tensorboardX import SummaryWriter
+    import torch
 
     # ------------------  initialize the trainer ------------------ #
     dataloader_clients, opt_clients, net_clients = initial_trainer(args)
@@ -45,14 +41,25 @@ def main():
                                       'Site{}_best.pth'.format(site_index + 1))
         torch.save(net_clients[site_index].state_dict(), save_mode_path)
 
-    # ------------------  start federated training ------------------ #
+    # ------------------  start tuning the parameters ------------------ #
     writer = SummaryWriter(args.log_path)
-    if 'bd' in args.fl:
-        memory_net_clients = deepcopy(net_clients)
+    memory_net_clients = deepcopy(net_clients)
     for epoch_num in range(args.max_epoch):
+        if 'bd' in args.fl:
+            cur_all_nets = memory_net_clients
+        elif 'fedlc' in args.fl:
+            cur_all_nets = []
+            for net in net_clients:
+                cur_all_nets.append(net.head)
+        else:
+            pass
         for client_idx in range(args.client_num):
             dataloader_current = dataloader_clients[client_idx]
             net_current = net_clients[client_idx]
+            if 'fedlc' in args.fl:
+                net_current.memory_all_nets = cur_all_nets
+            else:
+                pass
             net_current.train()
             optimizer_current = opt_clients[client_idx]
 
@@ -62,27 +69,27 @@ def main():
                 ), sampled_batch['label'].cuda()
 
                 # obtain updated parameter at inner loop
-                outputs = net_current(volume_batch)
+                outputs, out_features = net_current(volume_batch,
+                                                    return_out=True)
 
                 # obtain the uncertainty
                 if 'bd' in args.fl:
                     un_map, preds = compute_pred_uncertainty(
-                        net_clients=memory_net_clients, images=volume_batch)
-                    # print(un_map.max(), un_map.min())
-                    # exit(0)
+                        net_clients=cur_all_nets, images=volume_batch)
+
                     plt.imsave(args.model_path + '/un_map.jpg',
                                un_map[0, 0].cpu().numpy(),
                                cmap='hot')
                     seg_loss = dice_loss(outputs, label_batch)
                     bd_loss = weighted_bce_loss(outputs, label_batch, un_map)
                     total_loss = seg_loss + bd_loss * args.lamb
-                    # total_loss = bd_loss
+                elif 'fedlc' in args.fl:
+                    total_loss = dice_loss(outputs, label_batch)
                 else:
                     total_loss = dice_loss(outputs, label_batch)
 
                 optimizer_current.zero_grad()
                 total_loss.backward()
-                # clip_gradient(optimizer_current, 1)
                 optimizer_current.step()
 
                 iter_num = len(dataloader_current) * epoch_num + i_batch

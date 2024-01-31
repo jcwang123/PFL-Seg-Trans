@@ -6,6 +6,22 @@ import numpy as np
 
 
 @torch.no_grad()
+def compute_pred_uncertainty_by_features(net_clients, features):
+    preds = []
+    for net in net_clients:
+        pred = net(features)
+        b, c, h, w = pred.size()
+        preds.append(pred.unsqueeze(0))
+    preds = torch.cat(preds, dim=0)
+
+    umap = torch.std(preds, dim=0)
+    if umap.max() > 0:
+        umap = umap / umap.max()
+    umap = umap.view(b, c, h, w)
+    return umap, preds
+
+
+@torch.no_grad()
 def compute_pred_uncertainty(net_clients, images):
     preds = []
     for net in net_clients:
